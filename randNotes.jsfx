@@ -1,0 +1,477 @@
+desc:Random Note Generator - put results in up to 7 channels
+
+slider1: 0<-24,24,1>Tonic Note (on the C chromatic scale)
+slider2: 0<0,5,1{sin,square,saw,triangle,pulse,tan}>Waveshape
+
+slider3: 2<1,32,1> Changes per beat
+slider4: 8<1,16,1> Length of change pattern
+slider5: 255<0,131071,1> Hitmask
+slider6: 1<0,1,0 {no,yes}> Hold notes over gaps in hitmask (no rests)
+slider7: 0<0,4,0 {major,minor,weird,2OctMajor,2OctMinor}> Use which scale?
+slider8: 500<0, 5000,1> Fade before transition (reduce pops)
+slider9: 100<0, 5000,1> Fade after transition (reduce pops)
+slider10: -3<-120,60,1> Volume (dB)
+slider11: 7<1,7,1> Number of channels to fill
+slider12: 3<1,55,1> Starting on which channel
+
+slider13: 50<1,99,1> If pulse, percentage of wavelength to pulse
+
+slider14: 0<0,100,1> Layer secondary wave percent
+slider15:0<0,5,1{sin,square,saw,triangle,pulse,tan}>Secondary waveshape
+slider16:50<1,99,1> If pulse, percentage of wavelength to pulse
+slider17:0<0,10,1{1,x,1/x,x^2,ln(x),e^x,atan(x),x^(1/2),1/x^(1/2),rand}> Multiply wave 1 amplitude by...
+slider18:0<0,10,1{1,x,1/x,x^2,ln(x),e^x,atan(x),x^(1/2),1/x^(1/2),rand}> Multiply wave 2 amplitude by...
+
+
+//Note on slider4 and slider5:
+// This effect will loop through slider4 (length of pattern) note changes.
+// It will compare the current note in the pattern to the Hitmask (bitmask).
+// If the current bit is 1, it will change the note.  Otherwise, it will sustain.
+
+@init
+t=0;
+c_time = 0;
+play = 0;
+curr_note = 0;
+third = 0;
+sixth = 12;
+fadeOut = 1;
+max_time = 10000;
+beatlost = 0;
+norests = slider6;
+
+//samples per beat
+spb = srate * 60 / tempo;
+//we'll need 8 notes in the buffer, each containing about a beat of sound
+buffer = 1000;
+buffs_set = 0;
+
+//keep track of when the tempo changes
+curr_tempo = tempo;
+
+chord_notes = 500;
+
+@slider
+
+norests = slider6;
+no_rest_next = 1;
+
+//by default only the first, third, fourth, and fifth
+// will be selected from.  Though this can vary.
+num_notes_avail = 4;
+chord_notes[0] = 0;// first
+chord_notes[1] = 2;//third
+chord_notes[2] = 3;//fourth
+chord_notes[3] = 4;//fifth
+
+second = 2;
+third = 3;  //minor - most common
+fourth = 5;
+fifth = 7;
+sixth = 9;
+seventh = 10;  //minor - most common
+slider7 == 0 ? //major
+(
+  //reflected above
+  third = 4;
+  seventh = 11;
+);
+slider7 == 1 ? //minor
+(
+  sixth = 8;
+);
+slider7 == 2 ? // that weird one
+(
+  second = 1;
+  sixth = 8;
+);
+slider7 == 3 ? // limited 2 octave stretch major
+(
+  second = 12;
+  third = 4;
+  fourth = 5;
+  fifth = 7;
+  sixth = 16; //4th +1 octave
+  seventh = 19; // 6th plus 1 octave
+  //Any given note can play all notes
+  num_notes_avail = 8;
+  i = 0;
+  loop(10,
+    chord_notes[i] = i;
+    i += 1;
+  );
+);
+slider7 == 4 ? //limited 2 octave stretch minor
+(
+  second = 12;
+  third = 3;
+  fourth = 5;
+  fifth = 7;
+  sixth = 15; // 4th +1 octave
+  seventh = 19; // 6th +1 octave
+  //Any given note can play all notes
+  num_notes_avail = 8;
+  i = 0;
+  loop(10,
+    chord_notes[i] = i;
+    i += 1;
+  );
+);
+
+buffs_set = 0;
+
+@sample
+
+//have we lost the beat?
+beatlost > 0 ?
+(
+  spl1 = 0;
+  //if so, wait for the next beat & start over
+  intbeat = floor(beatpos + WAT + (offset * bps));
+  curr_tempo = tempo;
+  intbeat != prevInt ?
+  (
+    spl1 = 1;
+    c_time = 0;
+    beatlost = 0;
+  );
+  prevInt = intbeat;
+  offset += 1;
+);
+
+spl1 != 0 ?
+(
+
+  //decrement our counter
+  c_time -= 1;
+  //when it hits 0, we need to re-randomize
+  c_time <=0 ?
+  (
+    //reset the counter to 0 for good measure
+    c_time = 0;
+    //if we're not resting during gaps in the hitmask...
+    norests != 0 ?
+    (
+      //...pick a note...
+      play = (spl0*128)|0;
+      play = play % num_notes_avail;
+      note = chord_notes[play];
+      //...and hold it
+      while (
+        c_time += 2*(1/tempo) * 60 * srate * (1 / slider3); //how many samples until the next transition
+        max_time = c_time;
+        fadeOut = 1;
+        //so how long should we hold this note?
+        curr_note = (curr_note+1)%slider4;
+        switch = slider5;
+        switch &= 2^(curr_note);
+        switch == 0; //do while switch == 0
+      );
+    ) : ( //resting on non-switched notes
+      c_time += 2*(1/tempo) * 60 * srate * (1 / slider3); //how many samples until the next transition
+      max_time = c_time;
+      fadeOut = 1;
+      curr_note = (curr_note+1)%slider4;
+      no_rest_next = slider5;
+      no_rest_next &= 2^(curr_note);
+      //if we aren't resting next...
+      no_rest_next != 0 ?
+      (
+        //...pick a note
+        play = (spl0*128)|0;
+        play = play % num_notes_avail;
+        note = chord_notes[play];
+      );
+    );
+  );
+
+  //check if we need to fade...out
+  c_time <= slider8 ?
+  (
+    fadeOut = (1 +c_time)/(slider8 + 1);
+  // add 1 to prevent divide by 0
+  );
+  //check if we need to fade...in
+  c_time >= (max_time - slider9) ?
+  (
+    fadeOut = (1 + max_time - c_time)/(slider9+1);
+  // +1 to prevent div by 0
+  );
+
+  //for loop
+  i = 0;
+
+  loop(slider11,
+    no_rest_next != 0 ?
+    (
+      my_note = (i+note)%8;
+      final = buffer[my_note*spb+t];
+      final *= fadeout;
+      final *= 2 ^ (slider10 / 6);
+    ) : ( final = 0; ); //rest
+    spl(slider12-1+i) += final;
+    i += 1;
+  );
+
+  t += 1;
+  t = t%spb;
+
+);
+
+spl1 == 0 ? spl0 = 0;
+
+//t += 1/srate;
+
+@block
+//make sure the tempo hasn't changed so we know when to adjust
+curr_tempo != tempo ?
+(
+//  delta = tempo/curr_tempo;
+//  c_time *= delta;
+  curr_tempo = tempo;
+  beatlost = 1;//beat_position+1;
+  WAT = 0.97902/(srate*(60/tempo));
+  bps = (tempo/60)/srate;
+  offset = 0;
+  beatpos = beat_position;
+);
+
+//populate our data
+buffs_set == 0 ?
+(
+  notes[0] = 261.626 * 2^(slider1/12);
+  notes[1] = notes[0] * 2^(second/12);
+  notes[2] = notes[0] * 2^(third/12); //major third, minor third, or tonic
+  notes[3] = notes[0] * 2^(fourth/12);
+  notes[4] = notes[0] * 2^(fifth/12);
+  notes[5] = notes[0] * 2^(sixth/12); //major sixth, minor sixth, or fourth
+  notes[6] = notes[0] * 2^(seventh/12); //major seventh, minor seventh, or octave
+  notes[7] = notes[0] * 2;
+  //samples per beat
+  spb = 2*srate * 60 / tempo; //we double our buffer length just for good measure
+
+  //load the buffer
+  segment = 0;
+  loop(8,
+    i = 0;
+    j = 0;
+    prev = 1.0;
+    w_len = srate/notes[segment];
+    p_len = w_len/2 * slider13/50;
+    pulse = 0;
+    loop(spb,
+      //BUILD BASIC WAVE
+      //sin wave
+      (slider2 == 0) ?
+      (
+        buffer[spb*segment + j] = sin(2*$pi*notes[segment]*i);
+      ) :
+      //square wave
+      (slider2 == 1) ?
+      (
+        pulse <= w_len/2 ? buffer[spb*segment + j] = 1 : buffer[spb*segment+j] = -1;
+        pulse >= w_len ? pulse = 0;
+        pulse += 1;
+      ) :
+      //saw wave
+      (slider2 == 2) ?
+      (
+        prev = prev - notes[segment]/srate;
+        prev<= 0 ? prev = 1.0;
+        buffer[spb*segment + j] = prev;
+      ) :
+      //triangle wave
+      (slider2 == 3) ?
+      (
+        prev = prev - 2*notes[segment]/srate;
+        prev < -1 ? prev = 1.0;
+        prev >= 0 ? buffer[spb*segment + j] = prev : buffer[spb*segment + j] = prev * -1;
+      ) :
+      //pulse wave
+      (slider2 == 4) ?
+      (
+        pulse <= p_len ? buffer[spb*segment + j] = 1 : buffer[spb*segment+j] = -1;
+        pulse >= w_len ? pulse = 0;
+        pulse += 1;
+      ) :
+      //tan wave
+      (slider2 == 5) ?
+      (
+        tmp = tan(2*$pi*notes[segment]*i);
+        tmp > 1 ? tmp = 1;
+        tmp < -1 ? tmp = -1;
+        buffer[spb*segment + j] = tmp;
+      );
+      //TRANSFORM WAVE AMPLITUDE
+      // *1 do nothing
+      // slider17 == 0
+      // *x
+      x = 1-i;
+      (slider17 == 1) ?
+      (
+        buffer[spb*segment + j] *= x;
+      ) :
+      // *1/x
+      (slider17 == 2) ?
+      (
+        buffer[spb*segment + j] *= 1/x;
+      ) :
+      // *x^2
+      (slider17 == 3) ?
+      (
+        buffer[spb*segment + j] *= x*x;
+      ) :
+      // *lnx
+      (slider17 == 4) ?
+      (
+        buffer[spb*segment + j] *= log(x);
+      ) :
+      // *e^x
+      (slider17 == 5) ?
+      (
+        buffer[spb*segment + j] *= exp(x);
+      ) :
+      // *x*ln(x)
+      (slider17 == 6) ?
+      (
+        buffer[spb*segment + j] *= atan(x);
+      ) :
+      // *x^(1/2)
+      (slider17 == 7) ?
+      (
+        buffer[spb*segment + j] *= sqrt(x);
+      ) :
+      // *1/x^(1/2)
+      (slider17 == 8) ?
+      (
+        buffer[spb*segment + j] *= invsqrt(x);
+      ) :
+      // rand
+      (slider17 == 9) ?
+      (
+        buffer[spb*segment + j] *= rand(.1)+.9;
+      );
+
+      //volume sanity check
+      buffer[spb*segment + j] > 1 ? buffer[spb*segment + j] = 1;
+      buffer[spb*segment + j] < 0 ? buffer[spb*segment + j] = 0;
+      i+=1/srate;
+      j +=1;
+    );
+    segment += 1;
+  ); //notes have been loaded
+
+  //LAYER SECOND WAVE (if applicable)
+  slider14 != 0 ?
+  (
+    segment = 0;
+    loop(8,
+      i = 0;
+      j = 0;
+      prev = 1.0;
+      w_len = srate/notes[segment];
+      p_len = w_len/2 * slider16/50;
+      pulse = 0;
+      loop(spb,
+        wave2 = 0;
+        //sin wave
+        (slider15 == 0) ?
+        (
+          wave2 += sin(2*$pi*notes[segment]*i)*slider14/100;
+        ) :
+        //square wave
+        (slider15 == 1) ?
+        (
+          pulse <= w_len/2 ? wave2 += 1*slider14/100 : wave2 += -1*slider14/100;
+          pulse >= w_len ? pulse = 0;
+          pulse += 1;
+        ) :
+        //saw wave
+        (slider15 == 2) ?
+        (
+          prev = prev - (notes[segment]/srate);
+          prev<= 0 ? prev = 1.0;
+          wave2 += prev*slider14/100;
+        ) :
+        //triangle wave
+        (slider15 == 3) ?
+        (
+          prev = prev - (2*notes[segment]/srate);
+          prev < -1 ? prev = 1.0;
+          prev >= 0 ? wave2 += prev*slider14/100 : wave2 += prev * -1*slider14/100; 
+        ) :
+        //pulse wave
+        (slider15 == 4) ?
+        (
+          pulse <= p_len ? wave2 += 1*slider14/100 : wave2 += -1*slider14/100;
+          pulse >= w_len ? pulse = 0;
+          pulse += 1;
+        ) :
+        (slider15 == 5) ?
+        (
+          tmp = tan(2*$pi*notes[segment]*i);
+          tmp > 1 ? tmp = 1;
+          tmp < -1 ? tmp = -1;
+          wave2 = tmp;
+        );
+        // *1 (do nothing)
+        // slider18 == 0
+        x = 1-i;
+        // *x
+        (slider18 == 1) ?
+        (
+          wave2 *= x;
+        ) :
+        // *1/x
+        (slider18 == 2) ?
+        (
+          wave2 *= 1/i;
+        ) :
+        // *x^2
+        (slider18 == 3) ?
+        (
+          wave2 *= i*i;
+        ) :
+        // *lnx
+        (slider18 == 4) ?
+        (
+          wave2 *= log(i);
+        ) :
+        // *e^x
+        (slider18 == 5) ?
+        (
+          wave2 *= exp(i);
+        ) :
+        // atan(x)
+        (slider18 == 6) ?
+        (
+          wave2 *= atan(i);
+        ) :
+        // *x^(1/2)
+        (slider18 == 7) ?
+        (
+          wave2 *= sqrt(i);
+        ) :
+        // *1/x^(1/2)
+        (slider18 == 8) ?
+        (
+          wave2 *= invsqrt(i);
+        ) :
+        // rand
+        (slider18 == 9) ?
+        (
+          wave2 *= rand(.1)+.9;
+        );
+        buffer[spb*segment + j] += wave2;
+        //volume sanity check
+        buffer[spb*segment + j] > 1 ? buffer[spb*segment + j] = 1;
+        buffer[spb*segment + j] < 0 ? buffer[spb*segment + j] = 0;
+        i+=1/srate;
+        j +=1;
+      );
+      segment += 1;
+    );
+  ); //second wave layered
+
+  buffs_set = 1;
+);
